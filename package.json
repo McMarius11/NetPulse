@@ -28,7 +28,8 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview --host 0.0.0.0 --port 8080",
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/net/lib.test.ts",
+    "test": "node --experimental-strip-types --test src/lib/net/lib.test.ts",
+    "test:scaffold": "node --test 'scripts/**/*.test.mjs'",
     "cli": "node --experimental-strip-types --no-warnings scripts/netpulse.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
