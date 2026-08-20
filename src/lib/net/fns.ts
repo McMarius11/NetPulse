@@ -22,6 +22,13 @@ export const dnsBenchFn = createServerFn({ method: "POST" })
     return benchmarkDns(data.domain);
   });
 
+export const dnsInspectFn = createServerFn({ method: "POST" })
+  .validator(z.object({ domain: z.string() }))
+  .handler(async ({ data }) => {
+    const { inspectDns } = await import("./engine");
+    return inspectDns(data.domain);
+  });
+
 export const dnsLoadFn = createServerFn({ method: "POST" })
   .validator(z.object({ domain: z.string() }))
   .handler(async ({ data }) => {
