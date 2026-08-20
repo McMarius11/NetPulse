@@ -1,6 +1,7 @@
 # NetPulse
 
 [![CI](https://github.com/McMarius11/NetPulse/actions/workflows/ci.yml/badge.svg)](https://github.com/McMarius11/NetPulse/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/McMarius11/NetPulse)](https://github.com/McMarius11/NetPulse/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Netzwerk-All-in-One: **Seitenanalyse**, **Bild-Forensik**, **HAR**, **DNS-Last**, **Crawl**, **TLS**, **Monitor**. GUI + CLI, Windows / Linux / macOS.
@@ -41,6 +42,8 @@ npm run dev
 Browser: [http://localhost:8080](http://localhost:8080)
 
 Windows: `start.bat` · Linux/macOS: `./start-local.sh`
+
+Fertige Pakete: [Releases](https://github.com/McMarius11/NetPulse/releases) (`NetPulse-v1.0.0.zip` auspacken, `npm install`, `npm run dev`).
 
 ## CLI
 

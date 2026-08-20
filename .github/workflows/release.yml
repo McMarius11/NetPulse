@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Pack source
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          git archive --format=zip --prefix="NetPulse-${VERSION}/" -o "NetPulse-${VERSION}.zip" HEAD
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ZIP="NetPulse-${GITHUB_REF_NAME}.zip"
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "$ZIP" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "NetPulse ${GITHUB_REF_NAME}" \
+              --generate-notes \
+              "$ZIP"
+          fi
