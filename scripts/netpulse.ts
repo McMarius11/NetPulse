@@ -9,7 +9,7 @@
  *   npm run cli -- har ./capture.har
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { analyzePage, benchmarkDns, crawlSite, inspectDns, loadTestDns, timeUrl } from "../src/lib/net/engine.ts";
+import { analyzePage, benchmarkDns, crawlSite, inspectDns, loadTestDns, tcpCheck, timeUrl } from "../src/lib/net/engine.ts";
 import { analysisToHar, parseHarText } from "../src/lib/net/har.ts";
 
 const argv = process.argv.slice(2);
@@ -35,6 +35,7 @@ async function main() {
   dns <domain> [--json]
   timing <url> [--json]
   crawl <url> [--json]
+  tcp <host> [port] [--json]
   har <datei.har> [--json]
 `);
     return;
@@ -113,6 +114,17 @@ async function main() {
     for (const p of c.pages) {
       process.stdout.write(`${Math.round(p.totalMs).toString().padStart(5)} ms  ${p.status}  ${p.url}\n`);
     }
+    return;
+  }
+  if (cmd === "tcp") {
+    const portRaw = argv.slice(2).find((a) => !a.startsWith("--"));
+    const port = Number(portRaw ?? 443);
+    const r = await tcpCheck(target, port);
+    if (wantJson) {
+      out(r);
+      return;
+    }
+    process.stdout.write(`${r.ok ? "offen" : "zu"}  ${r.host}:${r.port}  ${r.ip ?? "—"}  ${r.ms === null ? r.error : `${Math.round(r.ms)} ms`}\n`);
     return;
   }
   throw new Error(`Unbekanntes Kommando: ${cmd}`);

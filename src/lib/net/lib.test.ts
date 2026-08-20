@@ -4,9 +4,39 @@ import { compareAnalyses } from "./compare.ts";
 import { analysisFromHar, analysisToHar, parseHarText } from "./har.ts";
 import { readImageMeta } from "./images.ts";
 import { isTrackerHost, isThirdParty, registrable } from "./trackers.ts";
-import { diagnoseDns, diagnoseDnsLoad, percentile } from "./dns.ts";
+import { cleanDomain, diagnoseDns, diagnoseDnsLoad, percentile } from "./dns.ts";
 import { diagnoseImage, enrichAnalysis } from "./summarize.ts";
+import { isBlockedHostname, isPrivateOrReservedIp, normalizeTargetUrl } from "./ssrf.ts";
 import type { PageAnalysis, PageResource } from "./types.ts";
+
+test("SSRF blocks localhost, RFC1918, link-local, multicast", () => {
+  assert.equal(isBlockedHostname("localhost"), true);
+  assert.equal(isBlockedHostname("foo.local"), true);
+  assert.equal(isBlockedHostname("example.com"), false);
+  assert.equal(isPrivateOrReservedIp("127.0.0.1"), true);
+  assert.equal(isPrivateOrReservedIp("10.0.0.1"), true);
+  assert.equal(isPrivateOrReservedIp("192.168.1.1"), true);
+  assert.equal(isPrivateOrReservedIp("169.254.169.254"), true);
+  assert.equal(isPrivateOrReservedIp("100.64.1.1"), true);
+  assert.equal(isPrivateOrReservedIp("224.0.0.1"), true);
+  assert.equal(isPrivateOrReservedIp("255.255.255.255"), true);
+  assert.equal(isPrivateOrReservedIp("::1"), true);
+  assert.equal(isPrivateOrReservedIp("fe80::1"), true);
+  assert.equal(isPrivateOrReservedIp("fd12:3456::1"), true);
+  assert.equal(isPrivateOrReservedIp("::ffff:127.0.0.1"), true);
+  assert.equal(isPrivateOrReservedIp("1.1.1.1"), false);
+  assert.equal(isPrivateOrReservedIp("8.8.8.8"), false);
+  assert.throws(() => normalizeTargetUrl("http://127.0.0.1/"), /private|intern/i);
+  assert.throws(() => normalizeTargetUrl("http://localhost/"), /lokal|intern/i);
+  assert.equal(normalizeTargetUrl("example.com").href, "https://example.com/");
+});
+
+test("cleanDomain rejects junk and localhost", () => {
+  assert.equal(cleanDomain("https://Wikipedia.org/wiki/A"), "wikipedia.org");
+  assert.equal(cleanDomain("example.com."), "example.com");
+  assert.throws(() => cleanDomain("localhost"), /gesperrt|ungültig/i);
+  assert.throws(() => cleanDomain(""), /Domain/);
+});
 
 test("PNG header yields 1x1", () => {
   const png = Uint8Array.from([

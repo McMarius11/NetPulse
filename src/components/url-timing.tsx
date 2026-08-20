@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatBytes, formatMs, toneForMs } from "@/components/format";
+import { asUrl, readLastTarget, writeLastTarget } from "@/lib/net/target";
 
 const PHASES: { key: keyof TimedRequest; label: string; warn: number; bad: number }[] = [
   { key: "dnsMs", label: "DNS", warn: 80, bad: 180 },
@@ -18,12 +19,13 @@ const PHASES: { key: keyof TimedRequest; label: string; warn: number; bad: numbe
 ];
 
 export function UrlTiming() {
-  const [url, setUrl] = useState("https://cloudflare.com");
+  const [url, setUrl] = useState(() => asUrl(readLastTarget()));
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState<TimedRequest | null>(null);
 
   async function run() {
     setBusy(true);
+    writeLastTarget(url);
     try {
       setData(await timeUrlFn({ data: { url } }));
     } catch (err) {
