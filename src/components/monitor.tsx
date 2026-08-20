@@ -4,11 +4,12 @@ import { timeUrlFn } from "@/lib/net/fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMs } from "@/components/format";
+import { asUrl, readLastTarget, writeLastTarget } from "@/lib/net/target";
 
 type Sample = { t: number; total: number; ttfb: number | null; ok: boolean };
 
 export function Monitor() {
-  const [url, setUrl] = useState("https://example.com");
+  const [url, setUrl] = useState(() => asUrl(readLastTarget()));
   const [running, setRunning] = useState(false);
   const [samples, setSamples] = useState<Sample[]>([]);
   const runningRef = useRef(false);
@@ -51,6 +52,7 @@ export function Monitor() {
         className="flex flex-col gap-3 sm:flex-row"
         onSubmit={(e) => {
           e.preventDefault();
+          writeLastTarget(url);
           setSamples([]);
           setRunning(true);
         }}

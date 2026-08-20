@@ -7,14 +7,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatBytes, formatMs, toneForMs } from "@/components/format";
+import { asUrl, readLastTarget, writeLastTarget } from "@/lib/net/target";
 
 export function CrawlPanel() {
-  const [url, setUrl] = useState("https://www.wikipedia.org");
+  const [url, setUrl] = useState(() => asUrl(readLastTarget()));
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState<CrawlResult | null>(null);
 
   async function run() {
     setBusy(true);
+    writeLastTarget(url);
     try {
       setData(await crawlSiteFn({ data: { url } }));
     } catch (err) {

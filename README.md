@@ -43,7 +43,7 @@ Browser: [http://localhost:8080](http://localhost:8080)
 
 Windows: `start.bat` · Linux/macOS: `./start-local.sh`
 
-Fertige Pakete: [Releases](https://github.com/McMarius11/NetPulse/releases) (`NetPulse-v1.0.0.zip` auspacken, `npm install`, `npm run dev`).
+Fertige Pakete: [Releases](https://github.com/McMarius11/NetPulse/releases) (ZIP auspacken, `npm install`, `npm run dev`).
 
 ## CLI
 
@@ -54,6 +54,7 @@ npm run cli -- har capture.har
 npm run cli -- dns wikipedia.org
 npm run cli -- timing https://example.com
 npm run cli -- crawl https://example.com
+npm run cli -- tcp 1.1.1.1 443
 ```
 
 JSON: `--json` anhängen.

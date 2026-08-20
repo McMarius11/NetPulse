@@ -17,20 +17,20 @@ export function isBlockedHostname(hostname: string): boolean {
 }
 
 export function isPrivateOrReservedIp(ip: string): boolean {
-  if (ip === "::1" || ip === "::") return true;
   const lower = ip.toLowerCase();
-  if (lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd")) {
-    return true;
-  }
   if (net.isIPv6(ip)) {
+    if (lower === "::1" || lower === "::") return true;
+    if (lower.startsWith("fe80:") || lower.startsWith("ff")) return true;
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
     if (lower.startsWith("::ffff:")) {
-      return isPrivateOrReservedIp(ip.slice(ip.lastIndexOf(":") + 1));
+      const mapped = ip.slice(ip.lastIndexOf(":") + 1);
+      if (mapped.includes(".")) return isPrivateOrReservedIp(mapped);
     }
     return false;
   }
   if (!net.isIPv4(ip)) return true;
   const parts = ip.split(".").map((n) => Number(n));
-  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return true;
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
   const [a, b] = parts;
   if (a === 0 || a === 10 || a === 127) return true;
   if (a === 169 && b === 254) return true;
@@ -38,6 +38,7 @@ export function isPrivateOrReservedIp(ip: string): boolean {
   if (a === 192 && b === 168) return true;
   if (a === 100 && b >= 64 && b <= 127) return true;
   if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a >= 224) return true;
   return false;
 }
 

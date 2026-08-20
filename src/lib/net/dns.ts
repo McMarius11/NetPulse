@@ -1,6 +1,7 @@
 import dns from "node:dns/promises";
 import { Resolver } from "node:dns/promises";
-import { isPrivateOrReservedIp, normalizeTargetUrl } from "./ssrf.ts";
+import { fetchHtml } from "./http.ts";
+import { isBlockedHostname, isPrivateOrReservedIp, normalizeTargetUrl } from "./ssrf.ts";
 import type {
   DnsBenchmark,
   DnsBurst,
@@ -29,16 +30,20 @@ function withTimeout<T>(p: Promise<T>, ms: number, label = "Timeout"): Promise<T
 }
 
 export function cleanDomain(domainRaw: string): string {
-  let domain = domainRaw.trim();
-  if (!domain) throw new Error("Bitte eine Domain eingeben.");
+  const trimmed = domainRaw.trim();
+  if (!trimmed) throw new Error("Bitte eine Domain eingeben.");
   try {
-    if (domain.includes("://")) domain = new URL(domain).hostname;
-  } catch {
-    /* keep */
+    const url = trimmed.includes("://") ? new URL(trimmed) : new URL(`https://${trimmed}`);
+    const domain = url.hostname.replace(/\.$/, "").toLowerCase();
+    if (!domain || !/^[a-z0-9.-]+$/.test(domain)) throw new Error("Ungültige Domain.");
+    if (isBlockedHostname(domain)) throw new Error("Lokale und interne Hosts sind gesperrt.");
+    return domain;
+  } catch (err) {
+    if (err instanceof Error && (err.message === "Ungültige Domain." || err.message.includes("gesperrt"))) {
+      throw err;
+    }
+    throw new Error("Ungültige Domain.");
   }
-  domain = domain.replace(/\.$/, "").replace(/^\./, "");
-  if (!/^[a-zA-Z0-9.-]+$/.test(domain)) throw new Error("Ungültige Domain.");
-  return domain;
 }
 
 async function rec(fn: () => Promise<DnsRecord[]>): Promise<DnsRecord[]> {
@@ -369,7 +374,7 @@ export async function inspectDns(domainRaw: string): Promise<DnsInspect> {
       return [
         {
           type: "SOA",
-          value: `${s.ns} ${s.hostmaster} serial ${s.serial} refresh ${s.refresh} retry ${s.retry} expire ${s.expire} minttl ${s.minttl}`,
+          value: `${s.nsname} ${s.hostmaster} serial ${s.serial} refresh ${s.refresh} retry ${s.retry} expire ${s.expire} minttl ${s.minttl}`,
           ttl: s.minttl ?? null,
         },
       ];
@@ -612,12 +617,7 @@ export async function loadTestDns(domainRaw: string): Promise<DnsLoadResult> {
   const hostSet = new Set<string>([domain]);
   try {
     const url = normalizeTargetUrl(domainRaw.includes("://") ? domainRaw : `https://${domain}/`);
-    const res = await fetch(url.href, {
-      headers: { "User-Agent": "NetPulse/1.1 (network diagnostics)", Accept: "text/html" },
-      signal: AbortSignal.timeout(8000),
-      redirect: "follow",
-    });
-    const html = await res.text();
+    const html = await fetchHtml(url.href, 8000);
     for (const h of hostsFromHtml(html, url.href).slice(0, 24)) hostSet.add(h);
   } catch {
     for (const sub of ["www", "static", "cdn", "images", "assets", "media"]) {

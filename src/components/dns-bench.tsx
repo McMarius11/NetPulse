@@ -7,9 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMs, toneForMs } from "@/components/format";
+import { hostFromTarget, readLastTarget, writeLastTarget } from "@/lib/net/target";
 
 export function DnsBench() {
-  const [domain, setDomain] = useState("wikipedia.org");
+  const [domain, setDomain] = useState(() => hostFromTarget(readLastTarget()) || "wikipedia.org");
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState<DnsBenchmark | null>(null);
   const [inspect, setInspect] = useState<DnsInspect | null>(null);
@@ -17,6 +18,7 @@ export function DnsBench() {
 
   async function run() {
     setBusy(true);
+    writeLastTarget(domain);
     try {
       const [bench, records, loadResult] = await Promise.all([
         dnsBenchFn({ data: { domain } }),

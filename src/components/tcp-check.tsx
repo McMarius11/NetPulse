@@ -7,17 +7,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMs } from "@/components/format";
+import { hostFromTarget, readLastTarget, writeLastTarget } from "@/lib/net/target";
 
 export function TcpCheckPanel() {
-  const [host, setHost] = useState("1.1.1.1");
+  const [host, setHost] = useState(() => hostFromTarget(readLastTarget()) || "1.1.1.1");
   const [port, setPort] = useState("443");
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState<TcpResult | null>(null);
 
   async function run() {
     setBusy(true);
+    writeLastTarget(host);
     try {
-      setData(await tcpCheckFn({ data: { host, port: Number(port) } }));
+      const parsedPort = Number.parseInt(port, 10);
+      setData(await tcpCheckFn({ data: { host, port: parsedPort } }));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "TCP-Check fehlgeschlagen");
     } finally {

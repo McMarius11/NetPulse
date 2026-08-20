@@ -4,7 +4,8 @@ import { toast } from "sonner";
 import { analyzePageFn } from "@/lib/net/fns";
 import { analysisToHar } from "@/lib/net/har";
 import { compareAnalyses } from "@/lib/net/compare";
-import { listReports, saveReport } from "@/lib/net/reports";
+import { deleteReport, listReports, saveReport } from "@/lib/net/reports";
+import { asUrl, readLastTarget, writeLastTarget } from "@/lib/net/target";
 import type { PageAnalysis, ResourceType } from "@/lib/net/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ const FILTERS: { id: ResourceType | "all"; label: string }[] = [
 ];
 
 export function PageAnalyzer() {
-  const [url, setUrl] = useState("https://www.wikipedia.org");
+  const [url, setUrl] = useState(() => asUrl(readLastTarget()));
   const [blockTrackers, setBlockTrackers] = useState(false);
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState<PageAnalysis | null>(null);
@@ -46,6 +47,7 @@ export function PageAnalyzer() {
 
   async function run() {
     setBusy(true);
+    writeLastTarget(url);
     try {
       const result = await analyzePageFn({ data: { url, blockTrackers } });
       if (data && !baseline) setBaseline(data);
@@ -149,26 +151,39 @@ export function PageAnalyzer() {
               </Button>
             )}
             {reports.length > 0 && (
-              <select
-                className="h-10 max-w-full rounded-md border border-border bg-surface px-3 font-mono text-xs text-fg"
-                defaultValue=""
-                onChange={(e) => {
-                  const row = reports.find((r) => r.id === e.target.value);
-                  if (row) {
-                    if (data) setBaseline(data);
-                    setData(row.data);
-                  }
-                  e.currentTarget.value = "";
-                }}
-                aria-label="Gespeicherte Reports"
-              >
-                <option value="">Gespeicherte Reports…</option>
-                {reports.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {new Date(r.savedAt).toLocaleString()} · {r.title}
-                  </option>
-                ))}
-              </select>
+              <>
+                <select
+                  className="h-10 max-w-full rounded-md border border-border bg-surface px-3 font-mono text-xs text-fg"
+                  defaultValue=""
+                  onChange={(e) => {
+                    const row = reports.find((r) => r.id === e.target.value);
+                    if (row) {
+                      if (data) setBaseline(data);
+                      setData(row.data);
+                    }
+                    e.currentTarget.value = "";
+                  }}
+                  aria-label="Gespeicherte Reports"
+                >
+                  <option value="">Gespeicherte Reports…</option>
+                  {reports.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {new Date(r.savedAt).toLocaleString()} · {r.title}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    for (const r of reports) deleteReport(r.id);
+                    setReports([]);
+                    toast.success("Reports gelöscht");
+                  }}
+                >
+                  Reports leeren
+                </Button>
+              </>
             )}
           </div>
 

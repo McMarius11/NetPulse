@@ -1,11 +1,7 @@
-import dns from "node:dns/promises";
-import http from "node:http";
-import https from "node:https";
 import net from "node:net";
-import tls from "node:tls";
-import zlib from "node:zlib";
-import { assertPublicIps, isPrivateOrReservedIp, normalizeTargetUrl } from "./ssrf.ts";
+import { cdnFrom, decodeBody, header, httpGet, resolvePublic, timeUrl, timeUrlWithBody } from "./http.ts";
 import { formatFromType, readImageMeta } from "./images.ts";
+import { normalizeTargetUrl } from "./ssrf.ts";
 import { hostOf, isThirdParty, isTrackerUrl } from "./trackers.ts";
 import { enrichAnalysis } from "./summarize.ts";
 import type {
@@ -16,260 +12,14 @@ import type {
   PageResource,
   ResourceType,
   TcpCheck,
-  TimedRequest,
-  TlsInfo,
 } from "./types.ts";
 
 export { benchmarkDns, inspectDns, loadTestDns } from "./dns.ts";
+export { timeUrl } from "./http.ts";
 
-
-const UA = "NetPulse/1.1 (network diagnostics)";
-const DOC_TIMEOUT = 20_000;
 const RES_TIMEOUT = 12_000;
 const MAX_RESOURCES = 72;
 const CONCURRENCY = 8;
-
-
-function header(headers: http.IncomingHttpHeaders, name: string): string | null {
-  const v = headers[name.toLowerCase()];
-  if (Array.isArray(v)) return v[0] ?? null;
-  return v ?? null;
-}
-
-function cdnFrom(headers: http.IncomingHttpHeaders): string | null {
-  return header(headers, "cf-cache-status") ?? header(headers, "x-cache") ?? header(headers, "x-cache-status");
-}
-
-function tlsFromSocket(socket: tls.TLSSocket): TlsInfo {
-  const cert = socket.getPeerCertificate?.(true) as
-    | {
-        subject?: { CN?: string; O?: string };
-        issuer?: { CN?: string; O?: string };
-        valid_from?: string;
-        valid_to?: string;
-        subjectaltname?: string;
-      }
-    | undefined;
-  const validTo = cert?.valid_to ?? null;
-  let daysLeft: number | null = null;
-  if (validTo) {
-    const t = Date.parse(validTo);
-    if (Number.isFinite(t)) daysLeft = Math.floor((t - Date.now()) / 86_400_000);
-  }
-  const san = cert?.subjectaltname?.split(",")[0]?.replace(/^DNS:/, "").trim() ?? null;
-  return {
-    protocol: socket.getProtocol?.() ?? null,
-    alpn: socket.alpnProtocol || null,
-    authorized: socket.authorized ?? null,
-    subject: cert?.subject?.CN ?? san,
-    issuer: cert?.issuer?.CN ?? cert?.issuer?.O ?? null,
-    validFrom: cert?.valid_from ?? null,
-    validTo,
-    daysLeft,
-  };
-}
-
-function decodeBody(buf: Buffer, encoding: string | null): Buffer {
-  if (!encoding) return buf;
-  const e = encoding.toLowerCase();
-  try {
-    if (e.includes("gzip")) return zlib.gunzipSync(buf);
-    if (e.includes("deflate")) return zlib.inflateSync(buf);
-    if (e.includes("br")) return zlib.brotliDecompressSync(buf);
-  } catch {
-    return buf;
-  }
-  return buf;
-}
-
-async function resolvePublic(hostname: string): Promise<string[]> {
-  if (net.isIP(hostname)) {
-    if (isPrivateOrReservedIp(hostname)) {
-      throw new Error("Private oder reservierte IP-Adressen sind gesperrt.");
-    }
-    return [hostname];
-  }
-  const looked = await dns.lookup(hostname, { all: true, verbatim: true });
-  const ips = looked.map((r) => r.address);
-  assertPublicIps(ips);
-  return ips.filter((ip) => !isPrivateOrReservedIp(ip));
-}
-
-export async function timeUrl(raw: string): Promise<TimedRequest> {
-  const url = normalizeTargetUrl(raw);
-  const ips = await resolvePublic(url.hostname);
-  return timeUrlInternal(url, ips[0] ?? null);
-}
-
-function timeUrlInternal(url: URL, preferredIp: string | null): Promise<TimedRequest> {
-  return new Promise((resolve) => {
-    const t0 = performance.now();
-    let dnsMs: number | null = null;
-    let tcpMs: number | null = null;
-    let tlsMs: number | null = null;
-    let ttfbMs: number | null = null;
-    let size = 0;
-    let tlsProtocol: string | null = null;
-    let alpn: string | null = null;
-    let tlsInfo: TlsInfo | null = null;
-    const redirects: string[] = [];
-
-    const lib = url.protocol === "https:" ? https : http;
-    const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
-
-    const req = lib.request(
-      {
-        hostname: url.hostname,
-        port,
-        path: `${url.pathname}${url.search}`,
-        method: "GET",
-        timeout: DOC_TIMEOUT,
-        headers: {
-          "User-Agent": UA,
-          Accept: "text/html,application/xhtml+xml,*/*",
-          "Accept-Encoding": "gzip, deflate, br",
-        },
-      },
-      (res) => {
-        const loc = header(res.headers, "location");
-        if (loc && res.statusCode && res.statusCode >= 300 && res.statusCode < 400) {
-          res.resume();
-          try {
-            const next = new URL(loc, url);
-            if (redirects.length >= 5) {
-              resolve(fail(url, "Zu viele Redirects.", t0, dnsMs, tcpMs, tlsMs, preferredIp));
-              return;
-            }
-            redirects.push(next.href);
-            void resolvePublic(next.hostname)
-              .then((ips) => timeUrlInternal(next, ips[0] ?? null))
-              .then((inner) => {
-                resolve({
-                  ...inner,
-                  url: url.href,
-                  redirects: [...redirects, ...inner.redirects],
-                });
-              })
-              .catch((err: unknown) => {
-                resolve(
-                  fail(url, err instanceof Error ? err.message : "Redirect fehlgeschlagen.", t0, dnsMs, tcpMs, tlsMs, preferredIp),
-                );
-              });
-          } catch {
-            resolve(fail(url, "Ungültiger Redirect.", t0, dnsMs, tcpMs, tlsMs, preferredIp));
-          }
-          return;
-        }
-
-        ttfbMs = performance.now() - t0;
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => {
-          size += chunk.length;
-          if (chunks.reduce((s, c) => s + c.length, 0) < 2_000_000) chunks.push(chunk);
-        });
-        res.on("end", () => {
-          const totalMs = performance.now() - t0;
-          const status = res.statusCode ?? null;
-          const httpVersion = res.httpVersion ? `HTTP/${res.httpVersion}` : alpn === "h2" ? "HTTP/2" : null;
-          resolve({
-            url: url.href,
-            finalUrl: url.href,
-            status,
-            ok: status !== null && status >= 200 && status < 400,
-            error: null,
-            sizeBytes: size,
-            contentType: header(res.headers, "content-type"),
-            server: header(res.headers, "server"),
-            cacheControl: header(res.headers, "cache-control"),
-            contentEncoding: header(res.headers, "content-encoding"),
-            age: header(res.headers, "age"),
-            cdnCache: cdnFrom(res.headers),
-            httpVersion,
-            alpn,
-            ip: preferredIp,
-            tlsProtocol,
-            tls: tlsInfo,
-            redirects,
-            dnsMs,
-            tcpMs: tcpMs === null || dnsMs === null ? tcpMs : Math.max(0, tcpMs - dnsMs),
-            tlsMs:
-              url.protocol === "https:" && tlsMs !== null && tcpMs !== null
-                ? Math.max(0, tlsMs - tcpMs)
-                : url.protocol === "https:"
-                  ? tlsMs
-                  : null,
-            ttfbMs:
-              ttfbMs === null ? null : Math.max(0, ttfbMs - (tlsMs ?? tcpMs ?? dnsMs ?? 0)),
-            transferMs: ttfbMs === null ? null : Math.max(0, totalMs - ttfbMs),
-            totalMs,
-          });
-        });
-      },
-    );
-
-    req.on("socket", (socket) => {
-      socket.once("lookup", () => {
-        dnsMs = performance.now() - t0;
-      });
-      socket.once("connect", () => {
-        tcpMs = performance.now() - t0;
-        if (dnsMs === null) dnsMs = 0;
-      });
-      socket.once("secureConnect", () => {
-        tlsMs = performance.now() - t0;
-        const tlsSock = socket as tls.TLSSocket;
-        tlsProtocol = tlsSock.getProtocol?.() ?? null;
-        alpn = tlsSock.alpnProtocol || null;
-        tlsInfo = tlsFromSocket(tlsSock);
-      });
-    });
-
-    req.on("timeout", () => {
-      req.destroy(new Error("Zeitüberschreitung"));
-    });
-    req.on("error", (err) => {
-      resolve(fail(url, err.message || "Verbindung fehlgeschlagen.", t0, dnsMs, tcpMs, tlsMs, preferredIp));
-    });
-    req.end();
-  });
-}
-
-function fail(
-  url: URL,
-  error: string,
-  t0: number,
-  dnsMs: number | null,
-  tcpMs: number | null,
-  tlsMs: number | null,
-  ip: string | null,
-): TimedRequest {
-  return {
-    url: url.href,
-    finalUrl: url.href,
-    status: null,
-    ok: false,
-    error,
-    sizeBytes: 0,
-    contentType: null,
-    server: null,
-    cacheControl: null,
-    contentEncoding: null,
-    age: null,
-    cdnCache: null,
-    httpVersion: null,
-    alpn: null,
-    ip,
-    tlsProtocol: null,
-    tls: null,
-    redirects: [],
-    dnsMs,
-    tcpMs,
-    tlsMs,
-    ttfbMs: null,
-    transferMs: null,
-    totalMs: performance.now() - t0,
-  };
-}
 
 function classify(url: string, hint: ResourceType, contentType: string | null): ResourceType {
   if (hint !== "other") return hint;
@@ -451,12 +201,7 @@ function extractSameOriginLinks(html: string, base: string, origin: string): str
   return urls;
 }
 
-async function fetchResource(
-  url: string,
-  meta: FoundRes,
-  startMs: number,
-  pageHost: string,
-): Promise<PageResource> {
+async function fetchResource(url: string, meta: FoundRes, startMs: number, pageHost: string): Promise<PageResource> {
   const t0 = performance.now();
   const host = hostOf(url);
   const base: PageResource = {
@@ -492,7 +237,6 @@ async function fetchResource(
   };
   try {
     const parsed = normalizeTargetUrl(url);
-    await resolvePublic(parsed.hostname);
     const got = await httpGet(parsed, RES_TIMEOUT);
     const contentType = header(got.headers, "content-type");
     const encoding = header(got.headers, "content-encoding");
@@ -538,83 +282,6 @@ async function fetchResource(
   }
 }
 
-function httpGet(
-  url: URL,
-  timeout: number,
-  hop = 0,
-  chain: string[] = [],
-): Promise<{
-  status: number;
-  headers: http.IncomingHttpHeaders;
-  body: Buffer;
-  ttfbMs: number;
-  transferMs: number;
-  totalMs: number;
-  redirects: string[];
-}> {
-  return new Promise((resolve, reject) => {
-    const t0 = performance.now();
-    const lib = url.protocol === "https:" ? https : http;
-    const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
-    const req = lib.request(
-      {
-        hostname: url.hostname,
-        port,
-        path: `${url.pathname}${url.search}`,
-        method: "GET",
-        timeout,
-        headers: {
-          "User-Agent": UA,
-          Accept: "*/*",
-          "Accept-Encoding": "gzip, deflate, br",
-        },
-      },
-      (res) => {
-        const loc = header(res.headers, "location");
-        if (loc && res.statusCode && res.statusCode >= 300 && res.statusCode < 400) {
-          res.resume();
-          if (hop >= 5) {
-            reject(new Error("Zu viele Redirects."));
-            return;
-          }
-          try {
-            const next = new URL(loc, url);
-            const nextChain = [...chain, next.href];
-            void resolvePublic(next.hostname)
-              .then(() => httpGet(next, timeout, hop + 1, nextChain))
-              .then(resolve, reject);
-          } catch (err) {
-            reject(err);
-          }
-          return;
-        }
-        const ttfbMs = performance.now() - t0;
-        const chunks: Buffer[] = [];
-        let size = 0;
-        res.on("data", (c: Buffer) => {
-          if (size < 4_000_000) chunks.push(c);
-          size += c.length;
-        });
-        res.on("end", () => {
-          const totalMs = performance.now() - t0;
-          resolve({
-            status: res.statusCode ?? 0,
-            headers: res.headers,
-            body: Buffer.concat(chunks),
-            ttfbMs,
-            transferMs: Math.max(0, totalMs - ttfbMs),
-            totalMs,
-            redirects: chain,
-          });
-        });
-      },
-    );
-    req.on("timeout", () => req.destroy(new Error("Zeitüberschreitung")));
-    req.on("error", reject);
-    req.end();
-  });
-}
-
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = [];
   let i = 0;
@@ -633,7 +300,8 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
 export async function analyzePage(raw: string, opts: { blockTrackers?: boolean } = {}): Promise<PageAnalysis> {
   const blockTrackers = Boolean(opts.blockTrackers);
   const url = normalizeTargetUrl(raw);
-  const doc = await timeUrl(url.href);
+  const fetched = await timeUrlWithBody(url.href);
+  const doc = fetched.timed;
   const pageHost = hostOf(doc.finalUrl || url.href) || url.hostname;
 
   if (!doc.ok && !doc.status) {
@@ -648,9 +316,7 @@ export async function analyzePage(raw: string, opts: { blockTrackers?: boolean }
 
   let html = "";
   try {
-    const parsed = new URL(doc.finalUrl || url.href);
-    const got = await httpGet(parsed, DOC_TIMEOUT);
-    html = decodeBody(got.body, header(got.headers, "content-encoding")).toString("utf8");
+    html = decodeBody(fetched.body, fetched.encoding).toString("utf8");
   } catch {
     html = "";
   }
@@ -660,20 +326,21 @@ export async function analyzePage(raw: string, opts: { blockTrackers?: boolean }
   for (const [cssUrl] of stylesheets) {
     try {
       const parsed = normalizeTargetUrl(cssUrl);
-      await resolvePublic(parsed.hostname);
       const got = await httpGet(parsed, 8000);
       const css = decodeBody(got.body, header(got.headers, "content-encoding")).toString("utf8");
       for (const img of extractCssUrls(css, parsed.href).slice(0, 12)) {
-        if (!map.has(img)) map.set(img, {
-          type: "image",
-          hasSrcset: false,
-          displayWidth: null,
-          displayHeight: null,
-          loading: null,
-          fetchPriority: null,
-          preloaded: false,
-          imageSource: "css",
-        });
+        if (!map.has(img)) {
+          map.set(img, {
+            type: "image",
+            hasSrcset: false,
+            displayWidth: null,
+            displayHeight: null,
+            loading: null,
+            fetchPriority: null,
+            preloaded: false,
+            imageSource: "css",
+          });
+        }
       }
     } catch {
       /* ignore css parse */
@@ -763,7 +430,7 @@ export async function crawlSite(raw: string): Promise<CrawlResult> {
   const start = url.href;
   let html = "";
   try {
-    const got = await httpGet(url, DOC_TIMEOUT);
+    const got = await httpGet(url, 20_000);
     html = decodeBody(got.body, header(got.headers, "content-encoding")).toString("utf8");
   } catch (err) {
     return {
