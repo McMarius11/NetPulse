@@ -123,7 +123,19 @@ function authPopupPlugin(): Plugin {
   };
 }
 
-// `0.0.0.0:8080` is the live-preview contract — don't change host/port.
+function shutdownPlugin(): Plugin {
+  return {
+    name: "netpulse-shutdown",
+    apply: "serve",
+    configureServer(server) {
+      const halt = () => {
+        void server.close().finally(() => process.exit(0));
+      };
+      process.once("SIGINT", halt);
+      process.once("SIGTERM", halt);
+    },
+  };
+}
 // Keep `nitro` gated to `build` (the Vercel deploy target): enabled in dev it
 // opens a second dev-server port, which breaks the single-port preview.
 // The dev server starts once `src/router.tsx` and `src/routes/` exist — see
@@ -137,6 +149,7 @@ export default defineConfig(({ command }) => ({
   resolve: { tsconfigPaths: true },
   plugins: [
     pgliteBootstrapPlugin(),
+    shutdownPlugin(),
     // Before tanstackStart so /auth/popup never falls through to the SPA.
     authPopupPlugin(),
     // PWA head + ?install=1 tutorial page; runs before Start/Nitro.
