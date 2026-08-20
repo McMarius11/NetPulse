@@ -1,0 +1,62 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --color-bg: #0b0c0e;
+  --color-surface: #121316;
+  --color-surface-2: #1a1b1f;
+  --color-surface-3: #222328;
+  --color-fg: #ececef;
+  --color-muted: #9a9aa3;
+  --color-subtle: #6d6d76;
+  --color-border: #2a2b31;
+  --color-border-strong: #3c3d45;
+  --color-accent: #d7d9de;
+  --color-accent-fg: #111215;
+  --color-ring: #8b8d96;
+  --color-ok: #7dcea0;
+  --color-ok-soft: #1b2a22;
+  --color-warn: #e0c07a;
+  --color-warn-soft: #2a2416;
+  --color-bad: #e08a84;
+  --color-bad-soft: #2a1817;
+  --color-image: #8fb4c9;
+  --color-script: #c9a88f;
+  --color-stylesheet: #a8c48f;
+  --color-font: #b39fd4;
+  --color-media: #8fc9b8;
+  --color-other: #8e8e96;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  html,
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    min-height: 100%;
+  }
+
+  body {
+    font-feature-settings: "ss01" 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
